@@ -43,9 +43,9 @@
   </div>
 
   <script>
-    // 你的函数URL（已内置）
+    // 你的函数URL（已确认正确）
     const FUNCTION_URL = "https://1391917854-1sr2dinvy1.ap-guangzhou.tencentscf.com";
-    let currentMediaId = ''; // 存储当前上传文件的media_id
+    let currentMediaId = '';
 
     const chatHistory = document.getElementById('chat-history');
     const userInput = document.getElementById('user-input');
@@ -57,15 +57,13 @@
       const file = e.target.files[0];
       if (!file) return;
 
-      // 显示文件预览
       appendMessage('user', '', file);
       
-      // 读取文件并上传到后端
       const reader = new FileReader();
       reader.onload = async (event) => {
         const fileBuffer = event.target.result;
         try {
-          const response = await fetch(`${FUNCTION_URL}/upload`, {
+          const response = await fetch(FUNCTION_URL, {
             method: 'POST',
             headers: {
               'file-name': file.name,
@@ -87,19 +85,19 @@
       fileInput.value = '';
     });
 
-    // 发送消息（文本+文件）
+    // 发送消息
     async function sendMessage() {
       const query = userInput.value.trim();
       if (!query && !currentMediaId) return;
 
-      // 显示用户消息
       appendMessage('user', query);
       userInput.value = '';
 
-      // 调用对话接口
-      let url = `${FUNCTION_URL}/chat?query=${encodeURIComponent(query)}`;
+      // 直接调用根路径，通过query参数传递内容
+      let url = new URL(FUNCTION_URL);
+      url.searchParams.append('query', encodeURIComponent(query));
       if (currentMediaId) {
-        url += `&media_id=${currentMediaId}`;
+        url.searchParams.append('media_id', currentMediaId);
         currentMediaId = '';
       }
 
@@ -134,13 +132,12 @@
       };
     }
 
-    // 追加消息到聊天记录
+    // 追加消息
     function appendMessage(role, content, file = null) {
       const messageDiv = document.createElement('div');
       messageDiv.className = `${role}-message message`;
       
       let contentHtml = `<div class="message-content">${content || ''}</div>`;
-      // 显示文件预览
       if (file) {
         if (file.type.startsWith('image/')) {
           contentHtml = `<img src="${URL.createObjectURL(file)}" class="file-preview">` + contentHtml;
