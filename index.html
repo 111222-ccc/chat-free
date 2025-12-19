@@ -2,7 +2,8 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>智能助手（支持文件/图片）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能助手</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: "Microsoft Yahei", sans-serif; background: #f5f5f5; }
@@ -43,96 +44,22 @@
   </div>
 
   <script>
-    // 你的函数URL（已确认正确）
-    const FUNCTION_URL = "https://1391917854-1sr2dinvy1.ap-guangzhou.tencentscf.com";
-    let currentMediaId = '';
+    // 你的函数URL（已填好）
+    const FUNCTION_URL = "https://1391917854-f5nigd659x.ap-guangzhou.tencentscf.com";
+    let currentMediaId = ''; // 上传文件后的media_id
 
+    // DOM元素
     const chatHistory = document.getElementById('chat-history');
     const userInput = document.getElementById('user-input');
     const fileInput = document.getElementById('file-input');
     const sendBtn = document.getElementById('send-btn');
 
-    // 文件上传处理
-    fileInput.addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      appendMessage('user', '', file);
-      
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const fileBuffer = event.target.result;
-        try {
-          const response = await fetch(FUNCTION_URL, {
-            method: 'POST',
-            headers: {
-              'file-name': file.name,
-              'file-type': file.type
-            },
-            body: fileBuffer
-          });
-          const result = await response.json();
-          if (result.code === 0) {
-            currentMediaId = result.data.media_id;
-          } else {
-            appendMessage('bot', `文件上传失败：${result.msg}`);
-          }
-        } catch (error) {
-          appendMessage('bot', `文件上传异常：${error.message}`);
-        }
-      };
-      reader.readAsArrayBuffer(file);
-      fileInput.value = '';
-    });
-
-    // 发送消息
-    async function sendMessage() {
-      const query = userInput.value.trim();
-      if (!query && !currentMediaId) return;
-
-      appendMessage('user', query);
-      userInput.value = '';
-
-      // 直接调用根路径，通过query参数传递内容
-      let url = new URL(FUNCTION_URL);
-      url.searchParams.append('query', encodeURIComponent(query));
-      if (currentMediaId) {
-        url.searchParams.append('media_id', currentMediaId);
-        currentMediaId = '';
-      }
-
-      const source = new EventSource(url);
-      let botMsg = '';
-      const botMsgDom = appendMessage('bot', '');
-      const loadingDom = document.createElement('div');
-      loadingDom.className = 'loading';
-      loadingDom.textContent = '正在思考...';
-      botMsgDom.appendChild(loadingDom);
-
-      source.onmessage = (e) => {
-        try {
-          loadingDom.remove();
-          const data = JSON.parse(e.data);
-          if (data.content) {
-            botMsg += data.content;
-            botMsgDom.querySelector('.message-content').textContent = botMsg;
-          }
-          if (data.is_finish) {
-            source.close();
-          }
-        } catch (err) {
-          console.error('解析消息失败：', err);
-        }
-      };
-
-      source.onerror = (e) => {
-        loadingDom.remove();
-        botMsgDom.querySelector('.message-content').textContent = '请求失败，请稍后重试';
-        source.close();
-      };
-    }
-
-    // 追加消息
+    /**
+     * 追加聊天消息
+     * @param {string} role - user/bot
+     * @param {string} content - 消息内容
+     * @param {File|null} file - 上传的文件（可选）
+     */
     function appendMessage(role, content, file = null) {
       const messageDiv = document.createElement('div');
       messageDiv.className = `${role}-message message`;
@@ -152,14 +79,109 @@
       return messageDiv;
     }
 
+    /**
+     * 上传文件到云函数
+     * @param {File} file - 待上传文件
+     */
+    async function uploadFile(file) {
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const res = await fetch(FUNCTION_URL, {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'file-name': file.name,
+            'file-type': file.type
+          }
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          currentMediaId = data.data.media_id;
+          appendMessage('user', '（文件已上传）', file);
+        } else {
+          appendMessage('bot', `文件上传失败：${data.msg}`);
+        }
+      } catch (err) {
+        appendMessage('bot', `文件上传异常：${err.message}`);
+      }
+    }
+
+    /**
+     * 发送聊天请求（SSE流式）
+     * @param {string} query - 对话内容
+     */
+    async function sendChat(query) {
+      // 追加用户消息
+      appendMessage('user', query);
+      userInput.value = '';
+
+      // 追加机器人加载中消息
+      const botMsgDiv = appendMessage('bot', '');
+      const loadingDiv = document.createElement('div');
+      loadingDiv.className = 'loading';
+      loadingDiv.textContent = '正在思考...';
+      botMsgDiv.appendChild(loadingDiv);
+
+      try {
+        // 构造SSE请求URL
+        const params = new URLSearchParams({ query });
+        if (currentMediaId) {
+          params.append('media_id', currentMediaId);
+          currentMediaId = ''; // 用完重置
+        }
+        const sseUrl = `${FUNCTION_URL}?${params}`;
+
+        // 建立SSE连接
+        const source = new EventSource(sseUrl);
+        let botMsg = '';
+
+        // 接收流式数据
+        source.onmessage = (e) => {
+          const data = JSON.parse(e.data);
+          if (data.content) {
+            botMsg += data.content;
+            botMsgDiv.querySelector('.message-content').textContent = botMsg;
+          }
+          // 结束连接
+          if (data.is_finish) {
+            source.close();
+            loadingDiv.remove();
+          }
+        };
+
+        // 连接错误
+        source.onerror = (err) => {
+          source.close();
+          loadingDiv.remove();
+          if (!botMsg) {
+            botMsgDiv.querySelector('.message-content').textContent = `请求失败：${err.message || '连接异常'}`;
+          }
+        };
+      } catch (err) {
+        loadingDiv.remove();
+        botMsgDiv.querySelector('.message-content').textContent = `请求失败：${err.message}`;
+      }
+    }
+
     // 绑定事件
-    sendBtn.addEventListener('click', sendMessage);
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) uploadFile(file);
+    });
+    sendBtn.addEventListener('click', () => {
+      const query = userInput.value.trim();
+      if (query) sendChat(query);
+    });
     userInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendMessage();
+        const query = userInput.value.trim();
+        if (query) sendChat(query);
       }
     });
   </script>
 </body>
 </html>
+
